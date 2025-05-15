@@ -1,0 +1,107 @@
+services:
+  # PostgreSQL for Patient Service
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: patientdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # Patient Service (Spring Boot)
+  patient-service:
+    build: ./patient-service
+    container_name: patient-service
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/patientdb
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+
+  # MongoDB for Appointment Service
+  mongo:
+    image: mongo:7
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  # Appointment Service (Node.js + Express)
+  appointment-service:
+    build: ./appointment-service
+    container_name: appointment-service
+    ports:
+      - "3000:3000"
+    depends_on:
+      - mongo
+      - rabbitmq
+      - patient-service
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/appointments
+      RABBITMQ_URL: amqp://rabbitmq
+      PATIENT_SERVICE_URL: http://patient-service:8080
+
+  # RabbitMQ with Management UI
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+  # Billing Service (FastAPI + SQLite)
+  billing-service:
+    build: ./billing-service
+    container_name: billing-service
+    ports:
+      - "8000:8000"
+    depends_on:
+      - rabbitmq
+    volumes:
+      - ./billing-service/data:/app/data
+    environment:
+      RABBITMQ_URL: amqp://rabbitmq
+      SQLITE_DB_PATH: /app/data/billing.db
+
+  frontend:
+    build: ./next-ui
+    container_name: hospital-ui
+    ports:
+      - "3001:3000"
+    environment:
+      PATIENT_API_URL: http://patient-service:8080
+      APPOINTMENT_API_URL: http://appointment-service:3000
+      BILLING_API_URL: http://billing-service:8000
+    depends_on:
+      - patient-service
+      - appointment-service
+      - billing-service
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - frontend
+      - patient-service
+      - appointment-service
+      - billing-service
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+
+volumes:
+  postgres_data:
+  mongo_data:
